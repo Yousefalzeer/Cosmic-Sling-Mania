@@ -267,6 +267,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         if (!p.isMoving) return p.x;
         return p.x + Math.sin((newMovingOffsets[p.id] ?? 0) + p.moveOffset) * p.moveRange;
       };
+
       let newTargetCameraY = state.targetCameraY;
       let newCameraShake = cameraShake;
       let newVisited = state.visitedPlanetIds;
@@ -282,7 +283,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
             obstacleRotations: newObstacleRotations,
             movingPlanetOffsets: newMovingOffsets,
             tickCount,
-            rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle },
+            rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle, burnoutProgress },
           };
         }
       }
@@ -353,7 +354,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           obstacleRotations: newObstacleRotations,
           movingPlanetOffsets: newMovingOffsets,
           tickCount,
-          rocket: { ...rocket, vx: 0, vy: 0, x: newX, y: newY, angle: newAngle },
+          rocket: { ...rocket, vx: 0, vy: 0, x: newX, y: newY, angle: newAngle, burnoutProgress },
         };
       }
 
@@ -375,8 +376,10 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           tickCount,
           rocket: {
             x: newX, y: newY, vx: 0, vy: 0,
-            angle: newAngle          tickCount,
-          rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle, burnoutProgress },
+            angle: newAngle,
+            attached: true,
+            attachedPlanetId: landedPlanetId,
+          },
         };
       }
 
@@ -389,7 +392,10 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         movingPlanetOffsets: newMovingOffsets,
         tickCount,
         rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle, burnoutProgress },
-      };    case 'RESTART': {
+      };
+    }
+
+    case 'RESTART': {
       planetCounter = 2;
       return buildGameState(state.highScore, state.soundEnabled);
     }
