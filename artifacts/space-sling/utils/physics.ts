@@ -1,4 +1,4 @@
-import { Planet, Rocket, Vec2 } from '@/types/game';
+import { Planet, Rocket, Vec2, Obstacle } from '@/types/game';
 import { GAME_CONFIG } from '@/constants/game';
 
 export function distance(a: Vec2, b: Vec2): number {
@@ -24,12 +24,10 @@ export function computeTrajectory(
   const points: Vec2[] = [];
   let x = startX;
   let y = startY;
-  let dvx = vx;
-  let dvy = vy;
 
   for (let i = 0; i < steps; i++) {
-    x += dvx * stepSize * 60;
-    y += dvy * stepSize * 60;
+    x += vx * stepSize * 60;
+    y += vy * stepSize * 60;
     points.push({ x, y });
   }
   return points;
@@ -38,6 +36,15 @@ export function computeTrajectory(
 export function checkLanding(rocket: Rocket, planet: Planet): boolean {
   const dist = distance({ x: rocket.x, y: rocket.y }, { x: planet.x, y: planet.y });
   return dist <= planet.radius * GAME_CONFIG.LANDING_TOLERANCE + GAME_CONFIG.ROCKET_RADIUS;
+}
+
+export function checkObstacleHit(rocketX: number, rocketY: number, obstacle: Obstacle): boolean {
+  const dist = distance({ x: rocketX, y: rocketY }, { x: obstacle.x, y: obstacle.y });
+  // Black holes have larger gravity well hitbox
+  const hitRadius = obstacle.type === 'blackhole'
+    ? obstacle.radius * 1.4
+    : obstacle.radius + GAME_CONFIG.ROCKET_RADIUS * 0.8;
+  return dist <= hitRadius;
 }
 
 export function getRocketAngle(vx: number, vy: number): number {
@@ -49,4 +56,8 @@ export function clampDragVector(dragDelta: Vec2, maxDist: number): Vec2 {
   if (mag <= maxDist) return dragDelta;
   const scale = maxDist / mag;
   return { x: dragDelta.x * scale, y: dragDelta.y * scale };
+}
+
+export function lerpCameraY(current: number, target: number, alpha: number): number {
+  return current + (target - current) * alpha;
 }

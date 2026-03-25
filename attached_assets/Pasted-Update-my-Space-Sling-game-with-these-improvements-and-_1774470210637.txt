@@ -1,0 +1,83 @@
+Update my Space Sling game with these improvements and actually modify the code, not just describe them.
+
+ISSUES TO FIX:
+
+1. ROCKET IS TOO SLOW
+- Increase the rocket launch speed significantly
+- Make the rocket feel more responsive and satisfying
+- Increase both the minimum and maximum launch force
+- Reduce any excessive drag or damping that slows movement
+- Make successful launches feel fast and arcade-like, not floaty or sluggish
+- Tune the movement so it feels smooth and polished on mobile
+
+2. DIFFICULTY IS NOT INCREASING
+- Add real difficulty progression over time
+- As score increases, make the game gradually harder by:
+  - increasing distance between planets
+  - reducing planet size occasionally
+  - introducing moving planets later
+  - increasing obstacle count later
+- Keep early gameplay easy, then ramp up fairly
+- Difficulty should scale based on score
+
+Example progression:
+- Score 0–5: easy planets, close together, no movement
+- Score 6–15: slightly farther planets, occasional smaller planets
+- Score 16–30: some moving planets, more spacing
+- Score 30+: harder spacing, smaller planets, more hazards
+
+3. ADD OBSTACLES
+- Add obstacles into the gameplay
+- Obstacles should fit the space theme
+- Use things like:
+  - asteroids
+  - black holes
+  - spinning satellites
+  - laser barriers
+- Start with simple asteroid obstacles first
+- Obstacles should appear between planets or near flight paths
+- Hitting an obstacle should cause game over or a crash effect
+- Obstacles should scale in frequency as difficulty increases
+
+4. PLANETS NEED A BETTER DESIGN
+- Redesign the planets so they look more polished and visually interesting
+- Give them a premium mobile game look
+- Add variety in colors and styles
+- Examples:
+  - glowing blue planet
+  - lava planet
+  - ice planet
+  - purple crater planet
+  - ringed planet
+- Add subtle shading, glow, outlines, and visual depth
+- Keep the art style cohesive with the rest of the game
+- If using placeholder art, make it much more attractive and modern
+
+5. BACKGROUND SHOULD MOVE WITH THE ROCKET
+- Add a moving/parallax background
+- The background should scroll as the rocket travels upward/forward
+- Make the camera follow the rocket smoothly
+- Add layered parallax movement:
+  - stars move slowly
+  - asteroids/clouds move slightly faster
+  - distant background moves subtly
+- This should make the game feel alive and give a real sense of progression through space
+
+ADDITIONAL POLISH:
+- Add better landing feedback
+- Add better crash feedback
+- Add particles for launch and impact
+- Add subtle camera movement or shake when appropriate
+- Keep performance mobile-friendly
+- Keep controls smooth and easy
+
+IMPORTANT:
+- Preserve the current game structure if possible
+- Improve the existing code rather than rebuilding badly
+- Make the gameplay feel more addictive and polished
+- Keep the UI clean and mobile-friendly
+- After making the changes, explain:
+  1. what files you changed
+  2. what gameplay values were adjusted
+  3. how difficulty now scales
+  4. how to further tune rocket speed and difficulty later
