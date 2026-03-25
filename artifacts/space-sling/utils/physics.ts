@@ -1,4 +1,4 @@
-import { Planet, Rocket, Vec2, OrbitingObstacle } from '@/types/game';
+import { Planet, Rocket, Vec2, Obstacle } from '@/types/game';
 import { GAME_CONFIG } from '@/constants/game';
 
 export function distance(a: Vec2, b: Vec2): number {
@@ -11,23 +11,6 @@ export function normalize(v: Vec2): Vec2 {
   const mag = Math.sqrt(v.x * v.x + v.y * v.y);
   if (mag === 0) return { x: 0, y: 0 };
   return { x: v.x / mag, y: v.y / mag };
-}
-
-/**
- * Computes the world-space position of an orbiting obstacle,
- * given its current angle and the effective planet center.
- */
-export function getOrbitPosition(obs: OrbitingObstacle, planetX: number, planetY: number): Vec2 {
-  return {
-    x: planetX + Math.cos(obs.angle) * obs.orbitRadius,
-    y: planetY + Math.sin(obs.angle) * obs.orbitRadius,
-  };
-}
-
-/** Checks if the rocket overlaps an orbiting obstacle using computed orbit position. */
-export function checkOrbitHit(rocketX: number, rocketY: number, obsPos: Vec2, obsSize: number): boolean {
-  const dist = distance({ x: rocketX, y: rocketY }, obsPos);
-  return dist <= obsSize + GAME_CONFIG.ROCKET_RADIUS * 0.85;
 }
 
 export function computeTrajectory(
@@ -47,6 +30,7 @@ export function computeTrajectory(
   const dampFactor = 1 - damping;
 
   for (let i = 0; i < steps; i++) {
+    // Apply damping each simulated step
     cvx *= dampFactor;
     cvy *= dampFactor;
     x += cvx * stepSize * 60;
@@ -59,6 +43,15 @@ export function computeTrajectory(
 export function checkLanding(rocket: Rocket, planet: Planet): boolean {
   const dist = distance({ x: rocket.x, y: rocket.y }, { x: planet.x, y: planet.y });
   return dist <= planet.radius * GAME_CONFIG.LANDING_TOLERANCE + GAME_CONFIG.ROCKET_RADIUS;
+}
+
+export function checkObstacleHit(rocketX: number, rocketY: number, obstacle: Obstacle): boolean {
+  const dist = distance({ x: rocketX, y: rocketY }, { x: obstacle.x, y: obstacle.y });
+  // Black holes have larger gravity well hitbox
+  const hitRadius = obstacle.type === 'blackhole'
+    ? obstacle.radius * 1.4
+    : obstacle.radius + GAME_CONFIG.ROCKET_RADIUS * 0.8;
+  return dist <= hitRadius;
 }
 
 export function getRocketAngle(vx: number, vy: number): number {
@@ -74,9 +67,4 @@ export function clampDragVector(dragDelta: Vec2, maxDist: number): Vec2 {
 
 export function lerpCameraY(current: number, target: number, alpha: number): number {
   return current + (target - current) * alpha;
-}
-
-/** Returns the raw drag distance (magnitude, before clamping) */
-export function dragMagnitude(dragDelta: Vec2): number {
-  return Math.sqrt(dragDelta.x * dragDelta.x + dragDelta.y * dragDelta.y);
 }
