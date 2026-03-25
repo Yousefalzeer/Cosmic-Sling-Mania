@@ -1,0 +1,52 @@
+NEW ISSUES TO FIX:
+
+1. PLANETS SOMETIMES SPAWN ABOVE THE VISIBLE PLAY AREA
+- Fix planet spawning so newly generated target planets always appear within a valid visible gameplay region
+- Do not place planets partly off-screen or above the top edge where the player cannot reasonably see or aim for them
+- Use the camera bounds / visible world bounds to calculate safe spawn positions
+- Add a vertical and horizontal margin so planets are comfortably visible, not touching the screen edges
+- Planet spawn logic should always respect the current camera size / zoom
+
+2. CAMERA SHOULD ZOOM OUT A BIT
+- Zoom the gameplay camera out so the player can see more of the play space
+- Make planets appear a bit smaller on screen by adjusting camera zoom and/or planet scale
+- The game currently feels too cramped
+- Keep the rocket readable, but give the player more room to aim and react
+- Make the framing feel polished for a portrait mobile game
+- If appropriate, reduce planet sprite scale slightly in addition to camera zoom
+
+3. PREVIOUS PLANET SHOULD NOT CATCH THE PLAYER AGAIN
+- Once the player launches from a planet to the next one, they should not be able to reattach to the previous planet
+- They should pass through the previous planet instead
+- Implement logic so only the current valid target planet can be landed on
+- The previously used planet should either:
+  - disable its landing collider / landing logic for the player
+  - move to a non-interactable state
+  - or no longer count as a valid landing body
+- This is very important because the player should always be progressing forward
+
+4. SMALL SLING PULL SHOULD RESULT IN SHORTER DISTANCE, NOT JUST SLOWER TRAVEL
+- Right now when the player pulls back only a little, the rocket still goes too far and just moves more slowly
+- Fix the launch physics so launch distance is directly tied to pull strength
+- A small pull should create a genuinely short hop
+- A medium pull should create a medium jump
+- A large pull should create a long jump
+- The rocket should not glide forever from a weak input
+- Adjust force, damping, velocity behavior, gravity influence, and/or travel model so this feels correct
+- The controls should feel skill-based and intuitive
+
+PHYSICS / GAME FEEL GOALS:
+- Launch power should map clearly to travel distance
+- Weak pulls should not overshoot
+- Strong pulls should feel powerful and satisfying
+- Remove floaty behavior
+- Keep controls responsive and arcade-like
+- The rocket should not drift unrealistically for too long after weak launches
+
+TECHNICAL EXPECTATIONS:
+- Update the current camera logic
+- Update planet spawn logic
+- Update landing validation logic
+- Update launch physics / drag behavior
+- Preserve the overall structure of the project where possible
+- Keep the game mobile-friendly and smooth

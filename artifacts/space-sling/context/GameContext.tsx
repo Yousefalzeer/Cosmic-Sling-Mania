@@ -28,15 +28,10 @@ function makeParticles(x: number, y: number, count: number, type: 'land' | 'cras
 
   return Array.from({ length: count }, (_, i) => {
     const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 1.2;
-    const speed = type === 'crash'
-      ? 2.5 + Math.random() * 5
-      : type === 'launch'
-      ? 1.5 + Math.random() * 3
-      : 1.8 + Math.random() * 3.5;
+    const speed = type === 'crash' ? 2.5 + Math.random() * 5 : type === 'launch' ? 1.5 + Math.random() * 3 : 1.8 + Math.random() * 3.5;
     return {
       id: `p_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      x,
-      y,
+      x, y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       size: type === 'crash' ? 4 + Math.random() * 7 : 3 + Math.random() * 5,
@@ -48,7 +43,7 @@ function makeParticles(x: number, y: number, count: number, type: 'land' | 'cras
 }
 
 function buildInitialState(highScore: number, soundEnabled: boolean): GameState {
-  const planets = generateInitialPlanets(SW, SH);
+  const planets = generateInitialPlanets();
   const startPlanet = planets[0];
   return {
     screen: 'menu',
@@ -63,7 +58,7 @@ function buildInitialState(highScore: number, soundEnabled: boolean): GameState 
       attached: true,
       attachedPlanetId: 'planet_0',
     },
-    stars: generateStars(SW, SH),
+    stars: generateStars(),
     particles: [],
     cameraY: 0,
     targetCameraY: 0,
@@ -75,6 +70,42 @@ function buildInitialState(highScore: number, soundEnabled: boolean): GameState 
     isGameOver: false,
     soundEnabled,
     lastLandedPlanetId: 'planet_0',
+    visitedPlanetIds: ['planet_0'],
+    obstacleRotations: {},
+    movingPlanetOffsets: {},
+    tickCount: 0,
+  };
+}
+
+function buildGameState(highScore: number, soundEnabled: boolean): GameState {
+  const planets = generateInitialPlanets();
+  const startPlanet = planets[0];
+  return {
+    screen: 'game',
+    score: 0,
+    highScore,
+    planets,
+    obstacles: [],
+    rocket: {
+      x: startPlanet.x,
+      y: startPlanet.y - startPlanet.radius - GAME_CONFIG.ROCKET_RADIUS,
+      vx: 0, vy: 0, angle: 0,
+      attached: true,
+      attachedPlanetId: 'planet_0',
+    },
+    stars: generateStars(),
+    particles: [],
+    cameraY: 0,
+    targetCameraY: 0,
+    cameraShake: 0,
+    isDragging: false,
+    dragStart: null,
+    dragCurrent: null,
+    trajectoryPoints: [],
+    isGameOver: false,
+    soundEnabled,
+    lastLandedPlanetId: 'planet_0',
+    visitedPlanetIds: ['planet_0'],
     obstacleRotations: {},
     movingPlanetOffsets: {},
     tickCount: 0,
@@ -82,7 +113,6 @@ function buildInitialState(highScore: number, soundEnabled: boolean): GameState 
 }
 
 let planetCounter = 2;
-let obstacleCounter = 0;
 
 function gameReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
@@ -99,18 +129,14 @@ function gameReducer(state: GameState, action: GameAction): GameState {
 
     case 'DRAG_MOVE': {
       if (!state.isDragging || !state.dragStart) return state;
-      const rawDelta = {
-        x: action.point.x - state.dragStart.x,
-        y: action.point.y - state.dragStart.y,
-      };
+      const rawDelta = { x: action.point.x - state.dragStart.x, y: action.point.y - state.dragStart.y };
       const clamped = clampDragVector(rawDelta, GAME_CONFIG.SLING_MAX_DISTANCE);
       const launchVx = -clamped.x * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
       const launchVy = -clamped.y * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
       const traj = computeTrajectory(
-        state.rocket.x, state.rocket.y,
-        launchVx, launchVy,
-        GAME_CONFIG.TRAJECTORY_DOTS,
-        GAME_CONFIG.TRAJECTORY_STEP,
+        state.rocket.x, state.rocket.y, launchVx, launchVy,
+        GAME_CONFIG.TRAJECTORY_DOTS, GAME_CONFIG.TRAJECTORY_STEP,
+        GAME_CONFIG.ROCKET_DAMPING,
       );
       return { ...state, dragCurrent: action.point, trajectoryPoints: traj };
     }
@@ -119,20 +145,14 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       if (!state.isDragging || !state.dragStart || !state.dragCurrent) {
         return { ...state, isDragging: false, dragStart: null, dragCurrent: null, trajectoryPoints: [] };
       }
-      const rawDelta = {
-        x: state.dragCurrent.x - state.dragStart.x,
-        y: state.dragCurrent.y - state.dragStart.y,
-      };
+      const rawDelta = { x: state.dragCurrent.x - state.dragStart.x, y: state.dragCurrent.y - state.dragStart.y };
       const clamped = clampDragVector(rawDelta, GAME_CONFIG.SLING_MAX_DISTANCE);
       if (Math.abs(clamped.x) < 3 && Math.abs(clamped.y) < 3) {
         return { ...state, isDragging: false, dragStart: null, dragCurrent: null, trajectoryPoints: [] };
       }
       const vx = -clamped.x * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
       const vy = -clamped.y * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
-
-      // Launch particles at rocket position
       const launchParticles = makeParticles(state.rocket.x, state.rocket.y, GAME_CONFIG.LAUNCH_PARTICLE_COUNT, 'launch');
-
       return {
         ...state,
         isDragging: false,
@@ -141,9 +161,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         trajectoryPoints: [],
         particles: [...state.particles, ...launchParticles],
         rocket: {
-          ...state.rocket,
-          vx,
-          vy,
+          ...state.rocket, vx, vy,
           attached: false,
           attachedPlanetId: null,
           angle: getRocketAngle(vx, vy),
@@ -158,30 +176,41 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       const tickCount = state.tickCount + 1;
       const { rocket, planets, obstacles, score } = state;
 
-      let newX = rocket.x + rocket.vx * dt * 60;
-      let newY = rocket.y + rocket.vy * dt * 60;
-      const newAngle = getRocketAngle(rocket.vx, rocket.vy);
+      // Apply damping: velocity decays each frame.
+      // This makes weak pulls produce short hops, strong pulls stay fast.
+      const damping = 1 - GAME_CONFIG.ROCKET_DAMPING;
+      let vx = rocket.vx * damping;
+      let vy = rocket.vy * damping;
 
-      // Smooth camera: lerp toward target
-      const attachedPlanet = planets.find(p => p.id === state.lastLandedPlanetId);
+      const speed = Math.sqrt(vx * vx + vy * vy);
+
+      let newX = rocket.x + vx * dt * 60;
+      let newY = rocket.y + vy * dt * 60;
+      const newAngle = getRocketAngle(vx, vy);
+
+      // Smooth camera lerp
       const smoothCameraY = lerpCameraY(state.cameraY, state.targetCameraY, GAME_CONFIG.CAMERA_LERP);
-      const cameraShake = Math.max(0, state.cameraShake - dt * 300);
+      const cameraShake = Math.max(0, state.cameraShake - dt * 280);
 
       // Update moving planet offsets
       const newMovingOffsets = { ...state.movingPlanetOffsets };
       for (const planet of planets) {
         if (planet.isMoving) {
-          const current = newMovingOffsets[planet.id] ?? 0;
-          newMovingOffsets[planet.id] = current + planet.moveSpeed * dt;
+          newMovingOffsets[planet.id] = (newMovingOffsets[planet.id] ?? 0) + planet.moveSpeed * dt;
         }
       }
 
       // Update obstacle rotations
       const newObstacleRotations = { ...state.obstacleRotations };
       for (const obs of obstacles) {
-        const current = newObstacleRotations[obs.id] ?? obs.rotation;
-        newObstacleRotations[obs.id] = current + obs.rotationSpeed;
+        newObstacleRotations[obs.id] = (newObstacleRotations[obs.id] ?? obs.rotation) + obs.rotationSpeed;
       }
+
+      // Effective X for moving planets
+      const getEffectiveX = (p: typeof planets[0]) => {
+        if (!p.isMoving) return p.x;
+        return p.x + Math.sin((newMovingOffsets[p.id] ?? 0) + p.moveOffset) * p.moveRange;
+      };
 
       let landed = false;
       let landedPlanetId: string | null = null;
@@ -191,72 +220,60 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       let newObstacles = [...obstacles];
       let newTargetCameraY = state.targetCameraY;
       let newCameraShake = cameraShake;
+      let newVisited = state.visitedPlanetIds;
 
-      // Get effective planet positions (accounting for movement)
-      const getEffectiveX = (p: typeof planets[0]) => {
-        if (!p.isMoving) return p.x;
-        const offset = newMovingOffsets[p.id] ?? 0;
-        return p.x + Math.sin(offset + p.moveOffset) * p.moveRange;
-      };
-
-      // Check obstacle collisions first
+      // Check obstacle collisions
       for (const obs of obstacles) {
         if (checkObstacleHit(newX, newY, obs)) {
           const crashParticles = makeParticles(newX, newY, GAME_CONFIG.CRASH_PARTICLE_COUNT, 'crash');
           return {
             ...state,
-            screen: 'gameover',
-            isGameOver: true,
-            cameraShake: 20,
+            screen: 'gameover', isGameOver: true, cameraShake: 20,
             particles: [...newParticles, ...crashParticles],
             obstacleRotations: newObstacleRotations,
             movingPlanetOffsets: newMovingOffsets,
             tickCount,
-            rocket: { ...rocket, x: newX, y: newY, angle: newAngle },
+            rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle },
           };
         }
       }
 
-      // Check landing on planets
+      // Check landing — skip ALL previously visited planets
       for (const planet of newPlanets) {
-        if (planet.id === state.lastLandedPlanetId) continue;
+        if (newVisited.includes(planet.id)) continue;
         const px = getEffectiveX(planet);
         const dist = distance({ x: newX, y: newY }, { x: px, y: planet.y });
         if (dist <= planet.radius + GAME_CONFIG.ROCKET_RADIUS * 1.2) {
           landed = true;
           landedPlanetId = planet.id;
           newScore = score + GAME_CONFIG.SCORE_PER_PLANET;
+          newVisited = [...newVisited, planet.id];
 
           // Snap rocket to planet surface
           const landAngle = Math.atan2(newY - planet.y, newX - px);
           newX = px + Math.cos(landAngle) * (planet.radius + GAME_CONFIG.ROCKET_RADIUS);
           newY = planet.y + Math.sin(landAngle) * (planet.radius + GAME_CONFIG.ROCKET_RADIUS);
 
-          // Landing particles + camera shake
           newParticles = [...newParticles, ...makeParticles(newX, newY, GAME_CONFIG.PARTICLE_COUNT, 'land')];
-          newCameraShake = 6;
+          newCameraShake = 5;
 
-          // Camera target = landed planet centered on upper portion of screen
+          // Camera: show the landed planet at CAMERA_TARGET_Y_RATIO from top
           newTargetCameraY = -(planet.y - SH * GAME_CONFIG.CAMERA_TARGET_Y_RATIO);
 
-          // Prune old planets that are far off camera
+          // Prune old objects far below the new camera target
           const cameraWorld = -newTargetCameraY;
-          newPlanets = newPlanets.filter(p => p.y > cameraWorld - SH * 0.3);
-          newObstacles = newObstacles.filter(o => o.y > cameraWorld - SH * 0.3);
+          newPlanets = newPlanets.filter(p => p.y > cameraWorld - SH * 0.4);
+          newObstacles = newObstacles.filter(o => o.y > cameraWorld - SH * 0.4);
 
-          // Spawn next planet (always keep 2 ahead)
-          const planetsAhead = newPlanets.filter(p => p.y < planet.y);
-          if (planetsAhead.length < 2) {
+          // Keep at least 2 unvisited planets ahead
+          const unvisitedAhead = newPlanets.filter(p => !newVisited.includes(p.id));
+          if (unvisitedAhead.length < 2) {
             const highestY = Math.min(...newPlanets.map(p => p.y));
-            const newPlanet = generatePlanet(`planet_${planetCounter++}`, SW, highestY, newScore);
+            const newPlanet = generatePlanet(`planet_${planetCounter++}`, planet.x, planet.y, newScore);
             newPlanets = [...newPlanets, newPlanet];
 
-            // Generate obstacles in the gap between last planet and new one
-            if (newPlanets.length >= 2) {
-              const fromPlanet = newPlanets.find(p => p.id === landedPlanetId) ?? planet;
-              const newObs = generateObstacles(fromPlanet, newPlanet, newScore, SW);
-              newObstacles = [...newObstacles, ...newObs];
-            }
+            const newObs = generateObstacles(planet, newPlanet, newScore);
+            newObstacles = [...newObstacles, ...newObs];
           }
 
           break;
@@ -265,33 +282,29 @@ function gameReducer(state: GameState, action: GameAction): GameState {
 
       // Tick particles
       const updatedParticles = newParticles
-        .map(p => ({
-          ...p,
-          x: p.x + p.vx,
-          y: p.y + p.vy,
-          vy: p.vy + 0.04,
-          vx: p.vx * 0.97,
-          life: p.life - dt * 1000,
-        }))
+        .map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.04, vx: p.vx * 0.97, life: p.life - dt * 1000 }))
         .filter(p => p.life > 0);
 
-      // Game over: off-screen
+      // Game over conditions:
+      // 1. Off-screen (missed all planets)
       const screenYRel = newY + smoothCameraY;
-      const offscreen = newX < -50 || newX > SW + 50 || screenYRel > SH + 120;
+      const offscreen = newX < -60 || newX > SW + 60 || screenYRel > SH + 150;
 
-      if (offscreen && !landed) {
-        const crashParticles = makeParticles(newX, newY, GAME_CONFIG.CRASH_PARTICLE_COUNT, 'crash');
+      // 2. Speed dropped below threshold (weak launch stalled)
+      const stalled = !landed && speed < GAME_CONFIG.MIN_SPEED_THRESHOLD;
+
+      if ((offscreen || stalled) && !landed) {
+        const crashParticles = makeParticles(newX, newY, stalled ? 8 : GAME_CONFIG.CRASH_PARTICLE_COUNT, stalled ? 'launch' : 'crash');
         return {
           ...state,
-          screen: 'gameover',
-          isGameOver: true,
-          cameraShake: 15,
+          screen: 'gameover', isGameOver: true,
+          cameraShake: stalled ? 4 : 14,
           particles: [...updatedParticles, ...crashParticles],
           cameraY: smoothCameraY,
           obstacleRotations: newObstacleRotations,
           movingPlanetOffsets: newMovingOffsets,
           tickCount,
-          rocket: { ...rocket, x: newX, y: newY, angle: newAngle },
+          rocket: { ...rocket, vx: 0, vy: 0, x: newX, y: newY, angle: newAngle },
         };
       }
 
@@ -307,6 +320,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           cameraShake: newCameraShake,
           particles: updatedParticles,
           lastLandedPlanetId: landedPlanetId,
+          visitedPlanetIds: newVisited,
           obstacleRotations: newObstacleRotations,
           movingPlanetOffsets: newMovingOffsets,
           tickCount,
@@ -327,47 +341,17 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         obstacleRotations: newObstacleRotations,
         movingPlanetOffsets: newMovingOffsets,
         tickCount,
-        rocket: { ...rocket, x: newX, y: newY, angle: newAngle },
+        rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle },
       };
     }
 
     case 'RESTART': {
       planetCounter = 2;
-      obstacleCounter = 0;
-      const planets = generateInitialPlanets(SW, SH);
-      const startPlanet = planets[0];
-      return {
-        ...state,
-        screen: 'game',
-        score: 0,
-        planets,
-        obstacles: [],
-        rocket: {
-          x: startPlanet.x,
-          y: startPlanet.y - startPlanet.radius - GAME_CONFIG.ROCKET_RADIUS,
-          vx: 0, vy: 0, angle: 0,
-          attached: true,
-          attachedPlanetId: 'planet_0',
-        },
-        particles: [],
-        cameraY: 0,
-        targetCameraY: 0,
-        cameraShake: 0,
-        isDragging: false,
-        dragStart: null,
-        dragCurrent: null,
-        trajectoryPoints: [],
-        isGameOver: false,
-        lastLandedPlanetId: 'planet_0',
-        obstacleRotations: {},
-        movingPlanetOffsets: {},
-        tickCount: 0,
-      };
+      return buildGameState(state.highScore, state.soundEnabled);
     }
 
     case 'GO_MENU': {
       planetCounter = 2;
-      obstacleCounter = 0;
       return { ...buildInitialState(state.highScore, state.soundEnabled), screen: 'menu' };
     }
 
@@ -432,8 +416,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const restartGame = useCallback(() => dispatch({ type: 'RESTART' }), []);
   const goToMenu = useCallback(() => dispatch({ type: 'GO_MENU' }), []);
   const toggleSound = useCallback(() => dispatch({ type: 'TOGGLE_SOUND' }), []);
-  const onDragStart = useCallback((point: Vec2) => dispatch({ type: 'DRAG_START', point }), []);
-  const onDragMove = useCallback((point: Vec2) => dispatch({ type: 'DRAG_MOVE', point }), []);
+  const onDragStart = useCallback((p: Vec2) => dispatch({ type: 'DRAG_START', point: p }), []);
+  const onDragMove = useCallback((p: Vec2) => dispatch({ type: 'DRAG_MOVE', point: p }), []);
   const onDragEnd = useCallback(() => dispatch({ type: 'DRAG_END' }), []);
 
   return (

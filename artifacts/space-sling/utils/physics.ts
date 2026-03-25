@@ -20,14 +20,21 @@ export function computeTrajectory(
   vy: number,
   steps: number,
   stepSize: number,
+  damping: number = 0,
 ): Vec2[] {
   const points: Vec2[] = [];
   let x = startX;
   let y = startY;
+  let cvx = vx;
+  let cvy = vy;
+  const dampFactor = 1 - damping;
 
   for (let i = 0; i < steps; i++) {
-    x += vx * stepSize * 60;
-    y += vy * stepSize * 60;
+    // Apply damping each simulated step
+    cvx *= dampFactor;
+    cvy *= dampFactor;
+    x += cvx * stepSize * 60;
+    y += cvy * stepSize * 60;
     points.push({ x, y });
   }
   return points;

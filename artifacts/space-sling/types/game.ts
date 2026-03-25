@@ -84,7 +84,10 @@ export interface GameState {
   trajectoryPoints: Vec2[];
   isGameOver: boolean;
   soundEnabled: boolean;
+  // The planet the rocket is currently on / just launched from
   lastLandedPlanetId: string | null;
+  // ALL previously visited planet IDs — none of these can be landed on again
+  visitedPlanetIds: string[];
   obstacleRotations: Record<string, number>;
   movingPlanetOffsets: Record<string, number>;
   tickCount: number;

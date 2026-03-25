@@ -1,8 +1,9 @@
+import { Dimensions } from 'react-native';
 import { Planet, Star, Obstacle, PlanetStyle } from '@/types/game';
 import { GAME_CONFIG } from '@/constants/game';
-import Colors from '@/constants/colors';
 
-// Planet style definitions: each style has a primary color and ring preference
+const { width: SW, height: SH } = Dimensions.get('window');
+
 const PLANET_STYLES: Array<{ style: PlanetStyle; color: string; ringChance: number; ringColor: string }> = [
   { style: 'ocean',  color: '#1A6FBF', ringChance: 0.1, ringColor: 'rgba(100,180,255,0.4)' },
   { style: 'lava',   color: '#C0392B', ringChance: 0.0, ringColor: '' },
@@ -14,7 +15,7 @@ const PLANET_STYLES: Array<{ style: PlanetStyle; color: string; ringChance: numb
   { style: 'ringed', color: '#D4AC0D', ringChance: 1.0, ringColor: 'rgba(230,190,50,0.5)' },
 ];
 
-function getTier(score: number) {
+export function getTier(score: number) {
   const tierIndex = Math.min(
     Math.floor(score / (GAME_CONFIG.SCORE_PER_PLANET * GAME_CONFIG.DIFFICULTY_RAMP_EVERY)),
     GAME_CONFIG.DIFFICULTY_TIERS.length - 1,
@@ -22,17 +23,37 @@ function getTier(score: number) {
   return GAME_CONFIG.DIFFICULTY_TIERS[tierIndex];
 }
 
+/**
+ * Generate a planet above `fromPlanet`, guaranteed to be visible after the camera
+ * settles at fromPlanet. The camera after landing on fromPlanet will target:
+ *   cameraY = -(fromPlanet.y - SH * CAMERA_TARGET_Y_RATIO)
+ * So the new planet's screen Y = newPlanet.y + cameraY
+ *                               = newPlanet.y - fromPlanet.y + SH * ratio
+ * We clamp dist so this falls within [PLANET_TOP_MARGIN, SH - 80].
+ */
 export function generatePlanet(
   id: string,
-  screenWidth: number,
-  aboveY: number,
+  fromPlanetX: number,
+  fromPlanetY: number,
   score: number,
 ): Planet {
   const tier = getTier(score);
-  const dist = tier.minDist + Math.random() * (tier.maxDist - tier.minDist);
-  const margin = 55;
-  const x = margin + Math.random() * (screenWidth - margin * 2);
-  const y = aboveY - dist;
+
+  // Max dist so next planet stays on-screen after camera settles
+  const maxAllowedDist = SH * GAME_CONFIG.CAMERA_TARGET_Y_RATIO - GAME_CONFIG.PLANET_TOP_MARGIN;
+
+  const rawDist = tier.minDist + Math.random() * (tier.maxDist - tier.minDist);
+  const dist = Math.min(rawDist, maxAllowedDist);
+
+  // Horizontal: stay within safe margins and prefer to vary from fromPlanet's X
+  const hMargin = GAME_CONFIG.PLANET_H_MARGIN;
+  const safeWidth = SW - hMargin * 2;
+  // Bias toward opposite side of screen for variety but never stack
+  const centerBias = Math.random() < 0.5
+    ? fromPlanetX < SW / 2 ? SW * 0.55 + Math.random() * SW * 0.3 : SW * 0.15 + Math.random() * SW * 0.3
+    : hMargin + Math.random() * safeWidth;
+  const x = Math.max(hMargin, Math.min(SW - hMargin, centerBias));
+  const y = fromPlanetY - dist;
 
   const radius = tier.minRadius + Math.random() * (tier.maxRadius - tier.minRadius);
   const styleInfo = PLANET_STYLES[Math.floor(Math.random() * PLANET_STYLES.length)];
@@ -50,17 +71,17 @@ export function generatePlanet(
     hasRing,
     isMoving,
     moveSpeed: 0.4 + Math.random() * 0.6,
-    moveRange: 40 + Math.random() * 50,
+    moveRange: 35 + Math.random() * 40,
     moveOffset: Math.random() * Math.PI * 2,
   };
 }
 
-export function generateInitialPlanets(screenWidth: number, screenHeight: number): Planet[] {
+export function generateInitialPlanets(): Planet[] {
   const startPlanet: Planet = {
     id: 'planet_0',
-    x: screenWidth / 2,
-    y: screenHeight * 0.72,
-    radius: 44,
+    x: SW / 2,
+    y: SH * 0.72,
+    radius: 42,
     color: '#7C3AED',
     style: 'gas',
     hasRing: false,
@@ -73,9 +94,9 @@ export function generateInitialPlanets(screenWidth: number, screenHeight: number
 
   const secondPlanet: Planet = {
     id: 'planet_1',
-    x: screenWidth * 0.28 + Math.random() * screenWidth * 0.44,
-    y: screenHeight * 0.72 - 220,
-    radius: 38,
+    x: SW * 0.3 + Math.random() * SW * 0.4,
+    y: SH * 0.72 - 190,
+    radius: 36,
     color: '#1A6FBF',
     style: 'ocean',
     hasRing: true,
@@ -93,48 +114,48 @@ export function generateObstacles(
   fromPlanet: Planet,
   toPlanet: Planet,
   score: number,
-  screenWidth: number,
 ): Obstacle[] {
   const tier = getTier(score);
   if (Math.random() > tier.obstacleChance) return [];
 
   const obstacles: Obstacle[] = [];
-  const count = 1 + (Math.random() < 0.4 ? 1 : 0); // 1 or 2 obstacles
+  const count = 1 + (Math.random() < 0.35 ? 1 : 0);
 
-  // Place obstacles in the space between the two planets
   for (let i = 0; i < count; i++) {
-    // Random position in the corridor between planets
-    const t = 0.25 + Math.random() * 0.5; // 25%-75% of the way
+    const t = 0.3 + Math.random() * 0.4;
     const midX = fromPlanet.x + (toPlanet.x - fromPlanet.x) * t;
     const midY = fromPlanet.y + (toPlanet.y - fromPlanet.y) * t;
-
-    // Offset sideways a bit so it's not always directly in path
-    const sideOffset = (Math.random() - 0.5) * 80;
+    const sideOffset = (Math.random() - 0.5) * 70;
     const type = score >= 30 && Math.random() < 0.3 ? 'blackhole' : 'asteroid';
 
+    // Make sure obstacle doesn't overlap planet surfaces
+    const obsX = Math.max(30, Math.min(SW - 30, midX + sideOffset));
+    const distFromPlanet = Math.hypot(obsX - fromPlanet.x, midY - fromPlanet.y);
+    if (distFromPlanet < fromPlanet.radius + 40) continue;
+
     obstacles.push({
-      id: `obs_${Date.now()}_${i}`,
-      x: midX + sideOffset,
+      id: `obs_${Date.now()}_${i}_${Math.random().toString(36).slice(2)}`,
+      x: obsX,
       y: midY,
       radius: type === 'blackhole' ? GAME_CONFIG.OBSTACLE_RADIUS_BLACKHOLE : GAME_CONFIG.OBSTACLE_RADIUS_ASTEROID,
       type,
       rotation: Math.random() * 360,
-      rotationSpeed: (Math.random() - 0.5) * 4,
+      rotationSpeed: (Math.random() - 0.5) * 3.5,
     });
   }
 
   return obstacles;
 }
 
-export function generateStars(screenWidth: number, screenHeight: number): Star[] {
+export function generateStars(): Star[] {
   const stars: Star[] = [];
-  const totalHeight = screenHeight * 8;
-  const startY = -totalHeight / 2;
+  const totalHeight = SH * 10;
+  const startY = -totalHeight * 0.6;
 
   for (let i = 0; i < GAME_CONFIG.STAR_COUNT; i++) {
     const layer = (i % 3) as 0 | 1 | 2;
     stars.push({
-      x: Math.random() * screenWidth,
+      x: Math.random() * SW,
       y: startY + Math.random() * totalHeight,
       size: layer === 0 ? 0.8 + Math.random() * 1.2 : layer === 1 ? 1.2 + Math.random() * 1.8 : 2 + Math.random() * 2.5,
       opacity: layer === 0 ? 0.2 + Math.random() * 0.4 : layer === 1 ? 0.4 + Math.random() * 0.5 : 0.6 + Math.random() * 0.4,
