@@ -14,23 +14,24 @@ export interface Planet {
   style: PlanetStyle;
   ringColor?: string;
   hasRing: boolean;
-  // moving planet support
   isMoving: boolean;
   moveSpeed: number;
   moveRange: number;
-  moveOffset: number; // phase offset for sin wave
+  moveOffset: number;
 }
 
-export type ObstacleType = 'asteroid' | 'blackhole';
+export type OrbitObstacleType = 'asteroid' | 'satellite' | 'mine' | 'debris';
 
-export interface Obstacle {
+/** A hazard that orbits a specific planet. Position is always derived from angle. */
+export interface OrbitingObstacle {
   id: string;
-  x: number;
-  y: number;
-  radius: number;
-  type: ObstacleType;
-  rotation: number;
-  rotationSpeed: number;
+  planetId: string;       // which planet this orbits
+  orbitRadius: number;    // distance from planet center
+  angle: number;          // current angle in radians
+  orbitSpeed: number;     // radians/second (negative = counter-clockwise)
+  type: OrbitObstacleType;
+  size: number;           // collision radius
+  selfRotation: number;   // visual self-rotation in degrees (for asteroids, etc.)
 }
 
 export interface Rocket {
@@ -41,6 +42,10 @@ export interface Rocket {
   angle: number;
   attached: boolean;
   attachedPlanetId: string | null;
+  /** True when the rocket ran out of fuel from a weak launch */
+  burnoutMode: boolean;
+  /** Accumulates time in burnout so we can delay game-over for the fall animation */
+  burnoutTimer: number;
 }
 
 export interface Star {
@@ -49,7 +54,7 @@ export interface Star {
   size: number;
   opacity: number;
   twinkleSpeed: number;
-  layer: 0 | 1 | 2; // 0=far, 1=mid, 2=near
+  layer: 0 | 1 | 2;
 }
 
 export interface Particle {
@@ -71,7 +76,7 @@ export interface GameState {
   score: number;
   highScore: number;
   planets: Planet[];
-  obstacles: Obstacle[];
+  orbitingObstacles: OrbitingObstacle[];
   rocket: Rocket;
   stars: Star[];
   particles: Particle[];
@@ -84,11 +89,8 @@ export interface GameState {
   trajectoryPoints: Vec2[];
   isGameOver: boolean;
   soundEnabled: boolean;
-  // The planet the rocket is currently on / just launched from
   lastLandedPlanetId: string | null;
-  // ALL previously visited planet IDs — none of these can be landed on again
   visitedPlanetIds: string[];
-  obstacleRotations: Record<string, number>;
   movingPlanetOffsets: Record<string, number>;
   tickCount: number;
 }

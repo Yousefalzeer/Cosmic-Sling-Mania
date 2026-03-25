@@ -1,434 +1,242 @@
-import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react';
-import { Dimensions } from 'react-native';
-import { GameState, Particle, Vec2, Obstacle } from '@/types/game';
-import { GAME_CONFIG } from '@/constants/game';
-import { generateInitialPlanets, generatePlanet, generateObstacles, generateStars } from '@/utils/generation';
-import { getRocketAngle, clampDragVector, distance, checkObstacleHit, computeTrajectory, lerpCameraY } from '@/utils/physics';
-import { getHighScore, saveHighScore, getSoundEnabled, saveSoundEnabled } from '@/utils/storage';
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Animated, Platform } from 'react-native';
+import { Rocket } from '@/types/game';
 import Colors from '@/constants/colors';
 
-const { width: SW, height: SH } = Dimensions.get('window');
+const ND = Platform.OS !== 'web';
 
-type GameAction =
-  | { type: 'INIT'; highScore: number; soundEnabled: boolean }
-  | { type: 'START_GAME' }
-  | { type: 'DRAG_START'; point: Vec2 }
-  | { type: 'DRAG_MOVE'; point: Vec2 }
-  | { type: 'DRAG_END' }
-  | { type: 'TICK'; delta: number }
-  | { type: 'RESTART' }
-  | { type: 'GO_MENU' }
-  | { type: 'TOGGLE_SOUND' };
-
-function makeParticles(x: number, y: number, count: number, type: 'land' | 'crash' | 'launch'): Particle[] {
-  const landColors = [Colors.accentLight, Colors.primaryLight, Colors.secondaryLight, Colors.white, '#FFF'];
-  const crashColors = [Colors.danger, '#FF6B35', '#FFD700', Colors.white, '#FF4444'];
-  const launchColors = [Colors.rocketFlame, Colors.accentLight, Colors.white, '#FFD700'];
-  const colors = type === 'land' ? landColors : type === 'crash' ? crashColors : launchColors;
-
-  return Array.from({ length: count }, (_, i) => {
-    const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 1.2;
-    const speed = type === 'crash' ? 2.5 + Math.random() * 5 : type === 'launch' ? 1.5 + Math.random() * 3 : 1.8 + Math.random() * 3.5;
-    return {
-      id: `p_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      size: type === 'crash' ? 4 + Math.random() * 7 : 3 + Math.random() * 5,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      life: type === 'crash' ? GAME_CONFIG.PARTICLE_LIFETIME * 1.3 : GAME_CONFIG.PARTICLE_LIFETIME,
-      maxLife: type === 'crash' ? GAME_CONFIG.PARTICLE_LIFETIME * 1.3 : GAME_CONFIG.PARTICLE_LIFETIME,
-    };
-  });
+interface Props {
+  rocket: Rocket;
+  cameraY: number;
+  isDragging: boolean;
+  isBroken?: boolean;
 }
 
-function buildInitialState(highScore: number, soundEnabled: boolean): GameState {
-  const planets = generateInitialPlanets();
-  const startPlanet = planets[0];
-  return {
-    screen: 'menu',
-    score: 0,
-    highScore,
-    planets,
-    obstacles: [],
-    rocket: {
-      x: startPlanet.x,
-      y: startPlanet.y - startPlanet.radius - GAME_CONFIG.ROCKET_RADIUS,
-      vx: 0, vy: 0, angle: 0,
-      attached: true,
-      attachedPlanetId: 'planet_0',
-    },
-    stars: generateStars(),
-    particles: [],
-    cameraY: 0,
-    targetCameraY: 0,
-    cameraShake: 0,
-    isDragging: false,
-    dragStart: null,
-    dragCurrent: null,
-    trajectoryPoints: [],
-    isGameOver: false,
-    soundEnabled,
-    lastLandedPlanetId: 'planet_0',
-    visitedPlanetIds: ['planet_0'],
-    obstacleRotations: {},
-    movingPlanetOffsets: {},
-    tickCount: 0,
-  };
-}
+export default function RocketView({ rocket, cameraY, isDragging, isBroken }: Props) {
+  const flameScaleAnim = useRef(new Animated.Value(1)).current;
+  const flameOpacityAnim = useRef(new Animated.Value(1)).current;
+  const wobbleAnim = useRef(new Animated.Value(0)).current;
+  const burnoutWobble = useRef(new Animated.Value(0)).current;
 
-function buildGameState(highScore: number, soundEnabled: boolean): GameState {
-  const planets = generateInitialPlanets();
-  const startPlanet = planets[0];
-  return {
-    screen: 'game',
-    score: 0,
-    highScore,
-    planets,
-    obstacles: [],
-    rocket: {
-      x: startPlanet.x,
-      y: startPlanet.y - startPlanet.radius - GAME_CONFIG.ROCKET_RADIUS,
-      vx: 0, vy: 0, angle: 0,
-      attached: true,
-      attachedPlanetId: 'planet_0',
-    },
-    stars: generateStars(),
-    particles: [],
-    cameraY: 0,
-    targetCameraY: 0,
-    cameraShake: 0,
-    isDragging: false,
-    dragStart: null,
-    dragCurrent: null,
-    trajectoryPoints: [],
-    isGameOver: false,
-    soundEnabled,
-    lastLandedPlanetId: 'planet_0',
-    visitedPlanetIds: ['planet_0'],
-    obstacleRotations: {},
-    movingPlanetOffsets: {},
-    tickCount: 0,
-  };
-}
-
-let planetCounter = 2;
-
-function gameReducer(state: GameState, action: GameAction): GameState {
-  switch (action.type) {
-    case 'INIT':
-      return buildInitialState(action.highScore, action.soundEnabled);
-
-    case 'START_GAME':
-      return { ...state, screen: 'game' };
-
-    case 'DRAG_START': {
-      if (!state.rocket.attached || state.screen !== 'game') return state;
-      return { ...state, isDragging: true, dragStart: action.point, dragCurrent: action.point };
-    }
-
-    case 'DRAG_MOVE': {
-      if (!state.isDragging || !state.dragStart) return state;
-      const rawDelta = { x: action.point.x - state.dragStart.x, y: action.point.y - state.dragStart.y };
-      const clamped = clampDragVector(rawDelta, GAME_CONFIG.SLING_MAX_DISTANCE);
-      const launchVx = -clamped.x * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
-      const launchVy = -clamped.y * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
-      const traj = computeTrajectory(
-        state.rocket.x, state.rocket.y, launchVx, launchVy,
-        GAME_CONFIG.TRAJECTORY_DOTS, GAME_CONFIG.TRAJECTORY_STEP,
-        GAME_CONFIG.ROCKET_DAMPING,
-      );
-      return { ...state, dragCurrent: action.point, trajectoryPoints: traj };
-    }
-
-    case 'DRAG_END': {
-      if (!state.isDragging || !state.dragStart || !state.dragCurrent) {
-        return { ...state, isDragging: false, dragStart: null, dragCurrent: null, trajectoryPoints: [] };
-      }
-      const rawDelta = { x: state.dragCurrent.x - state.dragStart.x, y: state.dragCurrent.y - state.dragStart.y };
-      const clamped = clampDragVector(rawDelta, GAME_CONFIG.SLING_MAX_DISTANCE);
-      if (Math.abs(clamped.x) < 3 && Math.abs(clamped.y) < 3) {
-        return { ...state, isDragging: false, dragStart: null, dragCurrent: null, trajectoryPoints: [] };
-      }
-      const vx = -clamped.x * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
-      const vy = -clamped.y * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
-      const launchParticles = makeParticles(state.rocket.x, state.rocket.y, GAME_CONFIG.LAUNCH_PARTICLE_COUNT, 'launch');
-      return {
-        ...state,
-        isDragging: false,
-        dragStart: null,
-        dragCurrent: null,
-        trajectoryPoints: [],
-        particles: [...state.particles, ...launchParticles],
-        rocket: {
-          ...state.rocket, vx, vy,
-          attached: false,
-          attachedPlanetId: null,
-          angle: getRocketAngle(vx, vy),
-        },
-      };
-    }
-
-    case 'TICK': {
-      if (state.screen !== 'game' || state.rocket.attached) return state;
-
-      const dt = action.delta;
-      const tickCount = state.tickCount + 1;
-      const { rocket, planets, obstacles, score } = state;
-
-      // Apply damping: velocity decays each frame.
-      // This makes weak pulls produce short hops, strong pulls stay fast.
-      const damping = 1 - GAME_CONFIG.ROCKET_DAMPING;
-      let vx = rocket.vx * damping;
-      let vy = rocket.vy * damping;
-
-      const speed = Math.sqrt(vx * vx + vy * vy);
-
-      let newX = rocket.x + vx * dt * 60;
-      let newY = rocket.y + vy * dt * 60;
-      const newAngle = getRocketAngle(vx, vy);
-
-      // Smooth camera lerp
-      const smoothCameraY = lerpCameraY(state.cameraY, state.targetCameraY, GAME_CONFIG.CAMERA_LERP);
-      const cameraShake = Math.max(0, state.cameraShake - dt * 280);
-
-      // Update moving planet offsets
-      const newMovingOffsets = { ...state.movingPlanetOffsets };
-      for (const planet of planets) {
-        if (planet.isMoving) {
-          newMovingOffsets[planet.id] = (newMovingOffsets[planet.id] ?? 0) + planet.moveSpeed * dt;
-        }
-      }
-
-      // Update obstacle rotations
-      const newObstacleRotations = { ...state.obstacleRotations };
-      for (const obs of obstacles) {
-        newObstacleRotations[obs.id] = (newObstacleRotations[obs.id] ?? obs.rotation) + obs.rotationSpeed;
-      }
-
-      // Effective X for moving planets
-      const getEffectiveX = (p: typeof planets[0]) => {
-        if (!p.isMoving) return p.x;
-        return p.x + Math.sin((newMovingOffsets[p.id] ?? 0) + p.moveOffset) * p.moveRange;
-      };
-
-      let landed = false;
-      let landedPlanetId: string | null = null;
-      let newScore = score;
-      let newParticles: Particle[] = [...state.particles];
-      let newPlanets = [...planets];
-      let newObstacles = [...obstacles];
-      let newTargetCameraY = state.targetCameraY;
-      let newCameraShake = cameraShake;
-      let newVisited = state.visitedPlanetIds;
-
-      // Check obstacle collisions
-      for (const obs of obstacles) {
-        if (checkObstacleHit(newX, newY, obs)) {
-          const crashParticles = makeParticles(newX, newY, GAME_CONFIG.CRASH_PARTICLE_COUNT, 'crash');
-          return {
-            ...state,
-            screen: 'gameover', isGameOver: true, cameraShake: 20,
-            particles: [...newParticles, ...crashParticles],
-            obstacleRotations: newObstacleRotations,
-            movingPlanetOffsets: newMovingOffsets,
-            tickCount,
-            rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle },
-          };
-        }
-      }
-
-      // Check landing — skip ALL previously visited planets
-      for (const planet of newPlanets) {
-        if (newVisited.includes(planet.id)) continue;
-        const px = getEffectiveX(planet);
-        const dist = distance({ x: newX, y: newY }, { x: px, y: planet.y });
-        if (dist <= planet.radius + GAME_CONFIG.ROCKET_RADIUS * 1.2) {
-          landed = true;
-          landedPlanetId = planet.id;
-          newScore = score + GAME_CONFIG.SCORE_PER_PLANET;
-          newVisited = [...newVisited, planet.id];
-
-          // Snap rocket to planet surface
-          const landAngle = Math.atan2(newY - planet.y, newX - px);
-          newX = px + Math.cos(landAngle) * (planet.radius + GAME_CONFIG.ROCKET_RADIUS);
-          newY = planet.y + Math.sin(landAngle) * (planet.radius + GAME_CONFIG.ROCKET_RADIUS);
-
-          newParticles = [...newParticles, ...makeParticles(newX, newY, GAME_CONFIG.PARTICLE_COUNT, 'land')];
-          newCameraShake = 5;
-
-          // Camera: show the landed planet at CAMERA_TARGET_Y_RATIO from top
-          newTargetCameraY = -(planet.y - SH * GAME_CONFIG.CAMERA_TARGET_Y_RATIO);
-
-          // Prune old objects far below the new camera target
-          const cameraWorld = -newTargetCameraY;
-          newPlanets = newPlanets.filter(p => p.y > cameraWorld - SH * 0.4);
-          newObstacles = newObstacles.filter(o => o.y > cameraWorld - SH * 0.4);
-
-          // Keep at least 2 unvisited planets ahead
-          const unvisitedAhead = newPlanets.filter(p => !newVisited.includes(p.id));
-          if (unvisitedAhead.length < 2) {
-            const highestY = Math.min(...newPlanets.map(p => p.y));
-            const newPlanet = generatePlanet(`planet_${planetCounter++}`, planet.x, planet.y, newScore);
-            newPlanets = [...newPlanets, newPlanet];
-
-            const newObs = generateObstacles(planet, newPlanet, newScore);
-            newObstacles = [...newObstacles, ...newObs];
-          }
-
-          break;
-        }
-      }
-
-      // Tick particles
-      const updatedParticles = newParticles
-        .map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.04, vx: p.vx * 0.97, life: p.life - dt * 1000 }))
-        .filter(p => p.life > 0);
-
-      // Game over conditions:
-      // 1. Off-screen (missed all planets)
-      const screenYRel = newY + smoothCameraY;
-      const offscreen = newX < -60 || newX > SW + 60 || screenYRel > SH + 150;
-
-      // 2. Speed dropped below threshold (weak launch stalled)
-      const stalled = !landed && speed < GAME_CONFIG.MIN_SPEED_THRESHOLD;
-
-      if ((offscreen || stalled) && !landed) {
-        const crashParticles = makeParticles(newX, newY, stalled ? 8 : GAME_CONFIG.CRASH_PARTICLE_COUNT, stalled ? 'launch' : 'crash');
-        return {
-          ...state,
-          screen: 'gameover', isGameOver: true,
-          cameraShake: stalled ? 4 : 14,
-          particles: [...updatedParticles, ...crashParticles],
-          cameraY: smoothCameraY,
-          obstacleRotations: newObstacleRotations,
-          movingPlanetOffsets: newMovingOffsets,
-          tickCount,
-          rocket: { ...rocket, vx: 0, vy: 0, x: newX, y: newY, angle: newAngle },
-        };
-      }
-
-      if (landed) {
-        return {
-          ...state,
-          score: newScore,
-          highScore: Math.max(newScore, state.highScore),
-          planets: newPlanets,
-          obstacles: newObstacles,
-          cameraY: smoothCameraY,
-          targetCameraY: newTargetCameraY,
-          cameraShake: newCameraShake,
-          particles: updatedParticles,
-          lastLandedPlanetId: landedPlanetId,
-          visitedPlanetIds: newVisited,
-          obstacleRotations: newObstacleRotations,
-          movingPlanetOffsets: newMovingOffsets,
-          tickCount,
-          rocket: {
-            x: newX, y: newY, vx: 0, vy: 0,
-            angle: newAngle,
-            attached: true,
-            attachedPlanetId: landedPlanetId,
-          },
-        };
-      }
-
-      return {
-        ...state,
-        particles: updatedParticles,
-        cameraY: smoothCameraY,
-        cameraShake,
-        obstacleRotations: newObstacleRotations,
-        movingPlanetOffsets: newMovingOffsets,
-        tickCount,
-        rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle },
-      };
-    }
-
-    case 'RESTART': {
-      planetCounter = 2;
-      return buildGameState(state.highScore, state.soundEnabled);
-    }
-
-    case 'GO_MENU': {
-      planetCounter = 2;
-      return { ...buildInitialState(state.highScore, state.soundEnabled), screen: 'menu' };
-    }
-
-    case 'TOGGLE_SOUND':
-      return { ...state, soundEnabled: !state.soundEnabled };
-
-    default:
-      return state;
-  }
-}
-
-interface GameContextValue {
-  state: GameState;
-  dispatch: React.Dispatch<GameAction>;
-  startGame: () => void;
-  restartGame: () => void;
-  goToMenu: () => void;
-  toggleSound: () => void;
-  onDragStart: (point: Vec2) => void;
-  onDragMove: (point: Vec2) => void;
-  onDragEnd: () => void;
-}
-
-const GameContext = createContext<GameContextValue | null>(null);
-
-export function GameProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(gameReducer, buildInitialState(0, true));
-  const lastTickRef = useRef<number>(Date.now());
-  const rafRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
+  // Normal flight flame flicker
   useEffect(() => {
-    (async () => {
-      const [highScore, soundEnabled] = await Promise.all([getHighScore(), getSoundEnabled()]);
-      dispatch({ type: 'INIT', highScore, soundEnabled });
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (state.highScore > 0) saveHighScore(state.highScore);
-  }, [state.highScore]);
-
-  useEffect(() => {
-    saveSoundEnabled(state.soundEnabled);
-  }, [state.soundEnabled]);
-
-  useEffect(() => {
-    if (state.screen !== 'game' || state.rocket.attached) {
-      if (rafRef.current) { clearInterval(rafRef.current); rafRef.current = null; }
-      return;
+    if (!rocket.attached && !isBroken && !rocket.burnoutMode) {
+      flameOpacityAnim.setValue(1);
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(flameScaleAnim, { toValue: 0.5, duration: 75, useNativeDriver: ND }),
+          Animated.timing(flameScaleAnim, { toValue: 1, duration: 75, useNativeDriver: ND }),
+        ])
+      ).start();
+    } else if (rocket.burnoutMode) {
+      // Flame sputters and fades when burning out
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(flameScaleAnim, { toValue: 0.2, duration: 150, useNativeDriver: ND }),
+          Animated.timing(flameScaleAnim, { toValue: 0.6, duration: 200, useNativeDriver: ND }),
+          Animated.timing(flameScaleAnim, { toValue: 0.1, duration: 180, useNativeDriver: ND }),
+        ])
+      ).start();
+      // Fade out the flame opacity as burnout progresses
+      Animated.timing(flameOpacityAnim, {
+        toValue: 0,
+        duration: GAME_CONFIG_BURNOUT_MS,
+        useNativeDriver: ND,
+      }).start();
+    } else {
+      flameScaleAnim.stopAnimation();
+      flameScaleAnim.setValue(0);
     }
-    lastTickRef.current = Date.now();
-    rafRef.current = setInterval(() => {
-      const now = Date.now();
-      const delta = Math.min((now - lastTickRef.current) / 1000, 0.05);
-      lastTickRef.current = now;
-      dispatch({ type: 'TICK', delta });
-    }, 16);
-    return () => { if (rafRef.current) { clearInterval(rafRef.current); rafRef.current = null; } };
-  }, [state.screen, state.rocket.attached]);
+    return () => { flameScaleAnim.stopAnimation(); };
+  }, [rocket.attached, isBroken, rocket.burnoutMode]);
 
-  const startGame = useCallback(() => dispatch({ type: 'START_GAME' }), []);
-  const restartGame = useCallback(() => dispatch({ type: 'RESTART' }), []);
-  const goToMenu = useCallback(() => dispatch({ type: 'GO_MENU' }), []);
-  const toggleSound = useCallback(() => dispatch({ type: 'TOGGLE_SOUND' }), []);
-  const onDragStart = useCallback((p: Vec2) => dispatch({ type: 'DRAG_START', point: p }), []);
-  const onDragMove = useCallback((p: Vec2) => dispatch({ type: 'DRAG_MOVE', point: p }), []);
-  const onDragEnd = useCallback(() => dispatch({ type: 'DRAG_END' }), []);
+  // Broken tumble animation
+  useEffect(() => {
+    if (isBroken) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(wobbleAnim, { toValue: 3, duration: 600, useNativeDriver: ND }),
+          Animated.timing(wobbleAnim, { toValue: -3, duration: 600, useNativeDriver: ND }),
+        ])
+      ).start();
+    } else {
+      wobbleAnim.stopAnimation();
+    }
+    return () => { wobbleAnim.stopAnimation(); };
+  }, [isBroken]);
+
+  // Burnout tumble animation (rockets spins during freefall)
+  useEffect(() => {
+    if (rocket.burnoutMode) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(burnoutWobble, { toValue: 12, duration: 300, useNativeDriver: ND }),
+          Animated.timing(burnoutWobble, { toValue: -12, duration: 300, useNativeDriver: ND }),
+        ])
+      ).start();
+    } else {
+      burnoutWobble.stopAnimation();
+      burnoutWobble.setValue(0);
+    }
+    return () => { burnoutWobble.stopAnimation(); };
+  }, [rocket.burnoutMode]);
+
+  const screenX = rocket.x;
+  const screenY = rocket.y + cameraY;
+
+  const rotation = isBroken
+    ? wobbleAnim.interpolate({ inputRange: [-3, 3], outputRange: ['-30deg', '30deg'] })
+    : rocket.burnoutMode
+    ? burnoutWobble.interpolate({ inputRange: [-12, 12], outputRange: [`${rocket.angle - 12}deg`, `${rocket.angle + 12}deg`] })
+    : `${rocket.angle}deg`;
+
+  const isFlying = !rocket.attached && !isBroken;
 
   return (
-    <GameContext.Provider value={{ state, dispatch, startGame, restartGame, goToMenu, toggleSound, onDragStart, onDragMove, onDragEnd }}>
-      {children}
-    </GameContext.Provider>
+    <Animated.View
+      style={[
+        styles.container,
+        {
+          left: screenX - 14,
+          top: screenY - 24,
+          transform: [{ rotate: rotation as any }],
+          opacity: isBroken ? 0.55 : 1,
+        },
+      ]}
+      pointerEvents="none"
+    >
+      {/* Flame — visible when flying (normal or burnout) */}
+      {isFlying && (
+        <Animated.View
+          style={[
+            styles.flameContainer,
+            {
+              opacity: rocket.burnoutMode
+                ? flameOpacityAnim
+                : flameScaleAnim.interpolate({ inputRange: [0.5, 1], outputRange: [0.6, 1] }),
+            },
+          ]}
+        >
+          <Animated.View style={[
+            styles.flameOuter,
+            { transform: [{ scaleY: flameScaleAnim }] },
+            rocket.burnoutMode && styles.flameBurnout,
+          ]} />
+          <Animated.View style={[
+            styles.flameInner,
+            { transform: [{ scaleY: flameScaleAnim }] },
+          ]} />
+        </Animated.View>
+      )}
+
+      {/* Rocket body */}
+      <View style={styles.body}>
+        <View style={styles.nose} />
+        <View style={styles.window} />
+        <View style={[styles.tube, rocket.burnoutMode && styles.tubeBurnout]} />
+        <View style={styles.finLeft} />
+        <View style={styles.finRight} />
+
+        {(isBroken || rocket.burnoutMode) && (
+          <>
+            <View style={[styles.breakLine, { top: 10, left: 5 }]} />
+            <View style={[styles.breakLine, { top: 14, left: 12 }]} />
+          </>
+        )}
+      </View>
+
+      {isDragging && <View style={styles.dragIndicator} />}
+    </Animated.View>
   );
 }
 
-export function useGame() {
-  const ctx = useContext(GameContext);
-  if (!ctx) throw new Error('useGame must be used within GameProvider');
-  return ctx;
-}
+// The burnout duration for flame fade (in ms) — matches GAME_CONFIG.BURNOUT_FALL_TIMEOUT
+const GAME_CONFIG_BURNOUT_MS = 2200;
+
+const styles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    width: 28,
+    height: 48,
+    alignItems: 'center',
+  },
+  flameContainer: {
+    position: 'absolute',
+    bottom: -12,
+    alignItems: 'center',
+  },
+  flameOuter: {
+    width: 12,
+    height: 18,
+    backgroundColor: Colors.rocketFlame,
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
+    opacity: 0.85,
+  },
+  flameBurnout: {
+    backgroundColor: '#888',
+    opacity: 0.5,
+  },
+  flameInner: {
+    position: 'absolute',
+    bottom: 0,
+    width: 6,
+    height: 10,
+    backgroundColor: '#FFF8E1',
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+  },
+  body: {
+    width: 28,
+    height: 48,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  nose: {
+    width: 0, height: 0,
+    borderLeftWidth: 9, borderRightWidth: 9, borderBottomWidth: 16,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent',
+    borderBottomColor: '#A78BFA',
+    position: 'absolute', top: 0,
+  },
+  window: {
+    width: 9, height: 9, borderRadius: 5,
+    backgroundColor: Colors.secondaryLight,
+    position: 'absolute', top: 18,
+    borderWidth: 1.5, borderColor: Colors.white,
+  },
+  tube: {
+    width: 18, height: 20,
+    backgroundColor: Colors.rocketBody,
+    borderRadius: 3,
+    position: 'absolute', top: 14,
+  },
+  tubeBurnout: {
+    backgroundColor: '#9E9E9E',
+  },
+  finLeft: {
+    width: 0, height: 0,
+    borderTopWidth: 0, borderBottomWidth: 12, borderRightWidth: 8,
+    borderTopColor: 'transparent', borderBottomColor: 'transparent',
+    borderRightColor: '#7C3AED',
+    position: 'absolute', bottom: 4, left: 1,
+  },
+  finRight: {
+    width: 0, height: 0,
+    borderTopWidth: 0, borderBottomWidth: 12, borderLeftWidth: 8,
+    borderTopColor: 'transparent', borderBottomColor: 'transparent',
+    borderLeftColor: '#7C3AED',
+    position: 'absolute', bottom: 4, right: 1,
+  },
+  breakLine: {
+    position: 'absolute',
+    width: 12, height: 2,
+    backgroundColor: Colors.danger,
+    borderRadius: 1,
+  },
+  dragIndicator: {
+    position: 'absolute', bottom: -6,
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: Colors.primaryLight, opacity: 0.8,
+  },
+});

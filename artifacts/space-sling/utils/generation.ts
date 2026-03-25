@@ -1,5 +1,5 @@
 import { Dimensions } from 'react-native';
-import { Planet, Star, Obstacle, PlanetStyle } from '@/types/game';
+import { Planet, Star, OrbitingObstacle, OrbitObstacleType, PlanetStyle } from '@/types/game';
 import { GAME_CONFIG } from '@/constants/game';
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -15,6 +15,8 @@ const PLANET_STYLES: Array<{ style: PlanetStyle; color: string; ringChance: numb
   { style: 'ringed', color: '#D4AC0D', ringChance: 1.0, ringColor: 'rgba(230,190,50,0.5)' },
 ];
 
+const ORBIT_TYPES: OrbitObstacleType[] = ['asteroid', 'satellite', 'mine', 'debris'];
+
 export function getTier(score: number) {
   const tierIndex = Math.min(
     Math.floor(score / (GAME_CONFIG.SCORE_PER_PLANET * GAME_CONFIG.DIFFICULTY_RAMP_EVERY)),
@@ -23,14 +25,6 @@ export function getTier(score: number) {
   return GAME_CONFIG.DIFFICULTY_TIERS[tierIndex];
 }
 
-/**
- * Generate a planet above `fromPlanet`, guaranteed to be visible after the camera
- * settles at fromPlanet. The camera after landing on fromPlanet will target:
- *   cameraY = -(fromPlanet.y - SH * CAMERA_TARGET_Y_RATIO)
- * So the new planet's screen Y = newPlanet.y + cameraY
- *                               = newPlanet.y - fromPlanet.y + SH * ratio
- * We clamp dist so this falls within [PLANET_TOP_MARGIN, SH - 80].
- */
 export function generatePlanet(
   id: string,
   fromPlanetX: number,
@@ -38,17 +32,12 @@ export function generatePlanet(
   score: number,
 ): Planet {
   const tier = getTier(score);
-
-  // Max dist so next planet stays on-screen after camera settles
   const maxAllowedDist = SH * GAME_CONFIG.CAMERA_TARGET_Y_RATIO - GAME_CONFIG.PLANET_TOP_MARGIN;
-
   const rawDist = tier.minDist + Math.random() * (tier.maxDist - tier.minDist);
   const dist = Math.min(rawDist, maxAllowedDist);
 
-  // Horizontal: stay within safe margins and prefer to vary from fromPlanet's X
   const hMargin = GAME_CONFIG.PLANET_H_MARGIN;
   const safeWidth = SW - hMargin * 2;
-  // Bias toward opposite side of screen for variety but never stack
   const centerBias = Math.random() < 0.5
     ? fromPlanetX < SW / 2 ? SW * 0.55 + Math.random() * SW * 0.3 : SW * 0.15 + Math.random() * SW * 0.3
     : hMargin + Math.random() * safeWidth;
@@ -61,15 +50,11 @@ export function generatePlanet(
   const isMoving = Math.random() < tier.movingChance;
 
   return {
-    id,
-    x,
-    y,
-    radius,
+    id, x, y, radius,
     color: styleInfo.color,
     style: styleInfo.style,
     ringColor: styleInfo.ringColor,
-    hasRing,
-    isMoving,
+    hasRing, isMoving,
     moveSpeed: 0.4 + Math.random() * 0.6,
     moveRange: 35 + Math.random() * 40,
     moveOffset: Math.random() * Math.PI * 2,
@@ -78,69 +63,62 @@ export function generatePlanet(
 
 export function generateInitialPlanets(): Planet[] {
   const startPlanet: Planet = {
-    id: 'planet_0',
-    x: SW / 2,
-    y: SH * 0.72,
-    radius: 42,
-    color: '#7C3AED',
-    style: 'gas',
-    hasRing: false,
-    ringColor: '',
-    isMoving: false,
-    moveSpeed: 0,
-    moveRange: 0,
-    moveOffset: 0,
+    id: 'planet_0', x: SW / 2, y: SH * 0.72, radius: 42,
+    color: '#7C3AED', style: 'gas', hasRing: false, ringColor: '',
+    isMoving: false, moveSpeed: 0, moveRange: 0, moveOffset: 0,
   };
-
   const secondPlanet: Planet = {
     id: 'planet_1',
     x: SW * 0.3 + Math.random() * SW * 0.4,
     y: SH * 0.72 - 190,
     radius: 36,
-    color: '#1A6FBF',
-    style: 'ocean',
-    hasRing: true,
+    color: '#1A6FBF', style: 'ocean', hasRing: true,
     ringColor: 'rgba(100,180,255,0.4)',
-    isMoving: false,
-    moveSpeed: 0,
-    moveRange: 0,
-    moveOffset: 0,
+    isMoving: false, moveSpeed: 0, moveRange: 0, moveOffset: 0,
   };
-
   return [startPlanet, secondPlanet];
 }
 
-export function generateObstacles(
-  fromPlanet: Planet,
-  toPlanet: Planet,
+/**
+ * Generates orbiting hazards for a specific planet.
+ * Each hazard is assigned an evenly-spaced starting angle so there are always
+ * clear windows between them — the gap angle is at least (2π / count) * gapFraction.
+ */
+export function generateOrbitingObstacles(
+  planet: Planet,
   score: number,
-): Obstacle[] {
+): OrbitingObstacle[] {
   const tier = getTier(score);
-  if (Math.random() > tier.obstacleChance) return [];
+  if (tier.orbitCount === 0) return [];
 
-  const obstacles: Obstacle[] = [];
-  const count = 1 + (Math.random() < 0.35 ? 1 : 0);
+  const orbitRadius = planet.radius + tier.orbitRadiusExtra;
+  const speed = tier.orbitSpeedMin + Math.random() * (tier.orbitSpeedMax - tier.orbitSpeedMin);
+  // Alternate direction for variety: clockwise on even score multiples
+  const direction = Math.floor(score / 10) % 2 === 0 ? 1 : -1;
+  const finalSpeed = speed * direction;
 
-  for (let i = 0; i < count; i++) {
-    const t = 0.3 + Math.random() * 0.4;
-    const midX = fromPlanet.x + (toPlanet.x - fromPlanet.x) * t;
-    const midY = fromPlanet.y + (toPlanet.y - fromPlanet.y) * t;
-    const sideOffset = (Math.random() - 0.5) * 70;
-    const type = score >= 30 && Math.random() < 0.3 ? 'blackhole' : 'asteroid';
+  const startAngle = Math.random() * Math.PI * 2;
+  const obstacles: OrbitingObstacle[] = [];
 
-    // Make sure obstacle doesn't overlap planet surfaces
-    const obsX = Math.max(30, Math.min(SW - 30, midX + sideOffset));
-    const distFromPlanet = Math.hypot(obsX - fromPlanet.x, midY - fromPlanet.y);
-    if (distFromPlanet < fromPlanet.radius + 40) continue;
+  for (let i = 0; i < tier.orbitCount; i++) {
+    // Evenly space obstacles: each one is (2π / count) apart + random jitter within ±15%
+    const baseAngle = startAngle + (i * Math.PI * 2) / tier.orbitCount;
+    const jitter = ((Math.random() - 0.5) * Math.PI * 2) / tier.orbitCount * 0.15;
+    const angle = baseAngle + jitter;
+
+    const type = ORBIT_TYPES[Math.floor(Math.random() * ORBIT_TYPES.length)];
+    // Size varies by type: satellites are small, mines and debris are medium, asteroids larger
+    const size = type === 'satellite' ? 8 : type === 'mine' ? 10 : type === 'debris' ? 7 : 12;
 
     obstacles.push({
-      id: `obs_${Date.now()}_${i}_${Math.random().toString(36).slice(2)}`,
-      x: obsX,
-      y: midY,
-      radius: type === 'blackhole' ? GAME_CONFIG.OBSTACLE_RADIUS_BLACKHOLE : GAME_CONFIG.OBSTACLE_RADIUS_ASTEROID,
+      id: `orbit_${planet.id}_${i}_${Date.now()}`,
+      planetId: planet.id,
+      orbitRadius,
+      angle,
+      orbitSpeed: finalSpeed,
       type,
-      rotation: Math.random() * 360,
-      rotationSpeed: (Math.random() - 0.5) * 3.5,
+      size,
+      selfRotation: Math.random() * 360,
     });
   }
 
