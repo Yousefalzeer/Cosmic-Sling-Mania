@@ -53,4 +53,17 @@ export const GAME_CONFIG = {
   PLANET_H_MARGIN: 65,
   // Vertical margin from screen top for spawned planets (so they're always in view)
   PLANET_TOP_MARGIN: 100,
+
+  // Orbiting Obstacles
+  ORBIT_SPEED_BASE: 0.015,
+  ORBIT_SPEED_MAX: 0.045,
+  ORBIT_RADIUS_PADDING: 12,
+  ORBIT_COUNT_MAX: 4,
+  ORBIT_CHANCE_BASE: 0.25,
+
+  // Fuel Burnout
+  BURNOUT_FORCE_THRESHOLD: 4.5,
+  BURNOUT_GRAVITY: 0.45,
+  BURNOUT_WOBBLE_INTENSITY: 1.8,
+  BURNOUT_FLAME_FADE_SPEED: 0.08,
 };

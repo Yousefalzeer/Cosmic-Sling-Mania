@@ -17,11 +17,26 @@ export default function RocketView({ rocket, cameraY, isDragging, isBroken }: Pr
   const wobbleAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!rocket.attached && !isBroken) {
+    if (!rocket.attached && !isBroken && !rocket.isBurnout) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(flameAnim, { toValue: 0.5, duration: 80, useNativeDriver: ND }),
           Animated.timing(flameAnim, { toValue: 1, duration: 80, useNativeDriver: ND }),
+        ])
+      ).start();
+    } else if (rocket.isBurnout) {
+      // Burnout sputter effect
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(flameAnim, { toValue: 0.1, duration: 40, useNativeDriver: ND }),
+          Animated.timing(flameAnim, { toValue: 0.4, duration: 40, useNativeDriver: ND }),
+        ])
+      ).start();
+      
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(wobbleAnim, { toValue: 2, duration: 100, useNativeDriver: ND }),
+          Animated.timing(wobbleAnim, { toValue: -2, duration: 100, useNativeDriver: ND }),
         ])
       ).start();
     } else {
@@ -37,14 +52,26 @@ export default function RocketView({ rocket, cameraY, isDragging, isBroken }: Pr
       flameAnim.stopAnimation();
       wobbleAnim.stopAnimation();
     };
-  }, [rocket.attached, isBroken]);
+  }, [rocket.attached, isBroken, rocket.isBurnout]);
 
   const screenX = rocket.x;
   const screenY = rocket.y + cameraY;
 
+  const burnoutProgress = rocket.burnoutProgress ?? 0;
+  
   const rotation = isBroken
     ? wobbleAnim.interpolate({ inputRange: [-3, 3], outputRange: ['-30deg', '30deg'] })
-    : `${rocket.angle}deg`;
+    : rocket.isBurnout
+      ? wobbleAnim.interpolate({ 
+          inputRange: [-2, 2], 
+          outputRange: [`${rocket.angle - 5}deg`, `${rocket.angle + 5}deg`] 
+        })
+      : `${rocket.angle}deg`;
+
+  const flameOpacity = Animated.multiply(
+    flameAnim, 
+    new Animated.Value(rocket.isBurnout ? Math.max(0, 1 - burnoutProgress * 1.5) : 1)
+  );
 
   return (
     <Animated.View
@@ -61,7 +88,7 @@ export default function RocketView({ rocket, cameraY, isDragging, isBroken }: Pr
     >
       {/* Flame */}
       {!rocket.attached && !isBroken && (
-        <Animated.View style={[styles.flameContainer, { opacity: flameAnim }]}>
+        <Animated.View style={[styles.flameContainer, { opacity: flameOpacity }]}>
           <View style={styles.flameOuter} />
           <View style={styles.flameInner} />
         </Animated.View>

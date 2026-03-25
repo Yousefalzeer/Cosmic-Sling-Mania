@@ -116,32 +116,64 @@ export function generateObstacles(
   score: number,
 ): Obstacle[] {
   const tier = getTier(score);
-  if (Math.random() > tier.obstacleChance) return [];
-
   const obstacles: Obstacle[] = [];
-  const count = 1 + (Math.random() < 0.35 ? 1 : 0);
 
-  for (let i = 0; i < count; i++) {
-    const t = 0.3 + Math.random() * 0.4;
-    const midX = fromPlanet.x + (toPlanet.x - fromPlanet.x) * t;
-    const midY = fromPlanet.y + (toPlanet.y - fromPlanet.y) * t;
-    const sideOffset = (Math.random() - 0.5) * 70;
-    const type = score >= 30 && Math.random() < 0.3 ? 'blackhole' : 'asteroid';
+  // 1. Static/Mid-gap obstacles (Existing logic)
+  if (Math.random() < tier.obstacleChance) {
+    const count = 1 + (Math.random() < 0.35 ? 1 : 0);
+    for (let i = 0; i < count; i++) {
+      const t = 0.3 + Math.random() * 0.4;
+      const midX = fromPlanet.x + (toPlanet.x - fromPlanet.x) * t;
+      const midY = fromPlanet.y + (toPlanet.y - fromPlanet.y) * t;
+      const sideOffset = (Math.random() - 0.5) * 70;
+      const type = score >= 30 && Math.random() < 0.3 ? 'blackhole' : 'asteroid';
 
-    // Make sure obstacle doesn't overlap planet surfaces
-    const obsX = Math.max(30, Math.min(SW - 30, midX + sideOffset));
-    const distFromPlanet = Math.hypot(obsX - fromPlanet.x, midY - fromPlanet.y);
-    if (distFromPlanet < fromPlanet.radius + 40) continue;
+      const obsX = Math.max(30, Math.min(SW - 30, midX + sideOffset));
+      const distFromPlanet = Math.hypot(obsX - fromPlanet.x, midY - fromPlanet.y);
+      if (distFromPlanet < fromPlanet.radius + 40) continue;
 
-    obstacles.push({
-      id: `obs_${Date.now()}_${i}_${Math.random().toString(36).slice(2)}`,
-      x: obsX,
-      y: midY,
-      radius: type === 'blackhole' ? GAME_CONFIG.OBSTACLE_RADIUS_BLACKHOLE : GAME_CONFIG.OBSTACLE_RADIUS_ASTEROID,
-      type,
-      rotation: Math.random() * 360,
-      rotationSpeed: (Math.random() - 0.5) * 3.5,
-    });
+      obstacles.push({
+        id: `obs_static_${Date.now()}_${i}`,
+        x: obsX, y: midY,
+        radius: type === 'blackhole' ? GAME_CONFIG.OBSTACLE_RADIUS_BLACKHOLE : GAME_CONFIG.OBSTACLE_RADIUS_ASTEROID,
+        type,
+        rotation: Math.random() * 360,
+        rotationSpeed: (Math.random() - 0.5) * 3.5,
+      });
+    }
+  }
+
+  // 2. Orbiting obstacles (New requirement)
+  // Scaling orbit chance and count based on score
+  const orbitChance = GAME_CONFIG.ORBIT_CHANCE_BASE + (score / 100) * 0.4;
+  if (Math.random() < orbitChance) {
+    const maxOrbits = Math.min(GAME_CONFIG.ORBIT_COUNT_MAX, 1 + Math.floor(score / 15));
+    const orbitCount = 1 + Math.floor(Math.random() * maxOrbits);
+    
+    const orbitRadius = toPlanet.radius + GAME_CONFIG.ORBIT_RADIUS_PADDING + 8;
+    const baseSpeed = GAME_CONFIG.ORBIT_SPEED_BASE + (score / 100) * (GAME_CONFIG.ORBIT_SPEED_MAX - GAME_CONFIG.ORBIT_SPEED_BASE);
+    const speed = baseSpeed * (Math.random() < 0.5 ? 1 : -1); // Random direction
+    const startAngle = Math.random() * Math.PI * 2;
+
+    for (let i = 0; i < orbitCount; i++) {
+      // Space them out evenly if multiple
+      const angle = startAngle + (i / orbitCount) * Math.PI * 2;
+      
+      obstacles.push({
+        id: `obs_orbit_${toPlanet.id}_${i}`,
+        x: toPlanet.x + Math.cos(angle) * orbitRadius,
+        y: toPlanet.y + Math.sin(angle) * orbitRadius,
+        radius: GAME_CONFIG.OBSTACLE_RADIUS_ASTEROID * 0.85, // Slightly smaller for orbiting
+        type: 'asteroid',
+        rotation: Math.random() * 360,
+        rotationSpeed: (Math.random() - 0.5) * 5,
+        isOrbiting: true,
+        orbitPlanetId: toPlanet.id,
+        orbitRadius,
+        orbitAngle: angle,
+        orbitSpeed: speed,
+      });
+    }
   }
 
   return obstacles;

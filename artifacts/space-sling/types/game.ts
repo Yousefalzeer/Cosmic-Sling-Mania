@@ -31,6 +31,12 @@ export interface Obstacle {
   type: ObstacleType;
   rotation: number;
   rotationSpeed: number;
+  // Orbiting properties
+  isOrbiting?: boolean;
+  orbitPlanetId?: string;
+  orbitRadius?: number;
+  orbitAngle?: number;
+  orbitSpeed?: number;
 }
 
 export interface Rocket {
@@ -41,6 +47,9 @@ export interface Rocket {
   angle: number;
   attached: boolean;
   attachedPlanetId: string | null;
+  // Fuel burnout fail state
+  isBurnout?: boolean;
+  burnoutProgress?: number; // 0 to 1
 }
 
 export interface Star {

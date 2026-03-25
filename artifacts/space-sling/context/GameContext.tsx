@@ -147,11 +147,18 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       }
       const rawDelta = { x: state.dragCurrent.x - state.dragStart.x, y: state.dragCurrent.y - state.dragStart.y };
       const clamped = clampDragVector(rawDelta, GAME_CONFIG.SLING_MAX_DISTANCE);
-      if (Math.abs(clamped.x) < 3 && Math.abs(clamped.y) < 3) {
+      
+      const dragMag = Math.sqrt(clamped.x * clamped.x + clamped.y * clamped.y);
+      if (dragMag < 5) {
         return { ...state, isDragging: false, dragStart: null, dragCurrent: null, trajectoryPoints: [] };
       }
+      
       const vx = -clamped.x * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
       const vy = -clamped.y * GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER;
+      
+      // Detect weak launch for burnout fail state
+      const isBurnout = dragMag < GAME_CONFIG.BURNOUT_FORCE_THRESHOLD * (1 / GAME_CONFIG.LAUNCH_SPEED_MULTIPLIER);
+      
       const launchParticles = makeParticles(state.rocket.x, state.rocket.y, GAME_CONFIG.LAUNCH_PARTICLE_COUNT, 'launch');
       return {
         ...state,
@@ -165,6 +172,8 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           attached: false,
           attachedPlanetId: null,
           angle: getRocketAngle(vx, vy),
+          isBurnout,
+          burnoutProgress: 0,
         },
       };
     }
@@ -178,19 +187,25 @@ function gameReducer(state: GameState, action: GameAction): GameState {
 
       // Apply damping: velocity decays each frame.
       // This makes weak pulls produce short hops, strong pulls stay fast.
-      const damping = 1 - GAME_CONFIG.ROCKET_DAMPING;
-      let vx = rocket.vx * damping;
-      let vy = rocket.vy * damping;
+      let damping = 1 - GAME_CONFIG.ROCKET_DAMPING;
+      let vx = rocket.vx;
+      let vy = rocket.vy;
+      let burnoutProgress = rocket.burnoutProgress ?? 0;
+
+      if (rocket.isBurnout) {
+        // Burnout logic: faster damping and apply gravity
+        damping = 1 - (GAME_CONFIG.ROCKET_DAMPING * 2.5);
+        vx *= damping;
+        vy *= damping;
+        vy += GAME_CONFIG.BURNOUT_GRAVITY * dt * 60;
+        burnoutProgress = Math.min(1, burnoutProgress + dt * 0.8);
+        
+      } else {
+        vx *= damping;
+        vy *= damping;
+      }
 
       const speed = Math.sqrt(vx * vx + vy * vy);
-
-      let newX = rocket.x + vx * dt * 60;
-      let newY = rocket.y + vy * dt * 60;
-      const newAngle = getRocketAngle(vx, vy);
-
-      // Smooth camera lerp
-      const smoothCameraY = lerpCameraY(state.cameraY, state.targetCameraY, GAME_CONFIG.CAMERA_LERP);
-      const cameraShake = Math.max(0, state.cameraShake - dt * 280);
 
       // Update moving planet offsets
       const newMovingOffsets = { ...state.movingPlanetOffsets };
@@ -200,30 +215,64 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         }
       }
 
-      // Update obstacle rotations
+      // Update obstacle rotations and orbiting positions
       const newObstacleRotations = { ...state.obstacleRotations };
-      for (const obs of obstacles) {
+      const updatedObstacles = obstacles.map(obs => {
         newObstacleRotations[obs.id] = (newObstacleRotations[obs.id] ?? obs.rotation) + obs.rotationSpeed;
-      }
-
-      // Effective X for moving planets
-      const getEffectiveX = (p: typeof planets[0]) => {
-        if (!p.isMoving) return p.x;
-        return p.x + Math.sin((newMovingOffsets[p.id] ?? 0) + p.moveOffset) * p.moveRange;
-      };
+        
+        if (obs.isOrbiting && obs.orbitPlanetId) {
+          const planet = planets.find(p => p.id === obs.orbitPlanetId);
+          if (planet) {
+            const newAngle = (obs.orbitAngle ?? 0) + (obs.orbitSpeed ?? 0) * dt * 60;
+            // Use planet's current effective X if it's moving
+            const px = planet.isMoving 
+              ? planet.x + Math.sin((newMovingOffsets[planet.id] ?? 0) + planet.moveOffset) * planet.moveRange
+              : planet.x;
+            
+            return {
+              ...obs,
+              orbitAngle: newAngle,
+              x: px + Math.cos(newAngle) * (obs.orbitRadius ?? 0),
+              y: planet.y + Math.sin(newAngle) * (obs.orbitRadius ?? 0),
+            };
+          }
+        }
+        return obs;
+      });
 
       let landed = false;
       let landedPlanetId: string | null = null;
       let newScore = score;
       let newParticles: Particle[] = [...state.particles];
       let newPlanets = [...planets];
-      let newObstacles = [...obstacles];
+      let newObstacles = updatedObstacles;
+
+      if (rocket.isBurnout) {
+        // Add sputter particles occasionally
+        if (tickCount % 4 === 0) {
+          newParticles = [...newParticles, ...makeParticles(rocket.x, rocket.y, 1, 'launch')];
+        }
+      }
+
+      let newX = rocket.x + vx * dt * 60;
+      let newY = rocket.y + vy * dt * 60;
+      const newAngle = getRocketAngle(vx, vy);
+
+      // Smooth camera lerp
+      const smoothCameraY = lerpCameraY(state.cameraY, state.targetCameraY, GAME_CONFIG.CAMERA_LERP);
+      const cameraShake = Math.max(0, state.cameraShake - dt * 280);
+
+      // Effective X for moving planets
+      const getEffectiveX = (p: typeof planets[0]) => {
+        if (!p.isMoving) return p.x;
+        return p.x + Math.sin((newMovingOffsets[p.id] ?? 0) + p.moveOffset) * p.moveRange;
+      };
       let newTargetCameraY = state.targetCameraY;
       let newCameraShake = cameraShake;
       let newVisited = state.visitedPlanetIds;
 
       // Check obstacle collisions
-      for (const obs of obstacles) {
+      for (const obs of newObstacles) {
         if (checkObstacleHit(newX, newY, obs)) {
           const crashParticles = makeParticles(newX, newY, GAME_CONFIG.CRASH_PARTICLE_COUNT, 'crash');
           return {
@@ -326,10 +375,8 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           tickCount,
           rocket: {
             x: newX, y: newY, vx: 0, vy: 0,
-            angle: newAngle,
-            attached: true,
-            attachedPlanetId: landedPlanetId,
-          },
+            angle: newAngle          tickCount,
+          rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle, burnoutProgress },
         };
       }
 
@@ -341,11 +388,8 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         obstacleRotations: newObstacleRotations,
         movingPlanetOffsets: newMovingOffsets,
         tickCount,
-        rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle },
-      };
-    }
-
-    case 'RESTART': {
+        rocket: { ...rocket, vx, vy, x: newX, y: newY, angle: newAngle, burnoutProgress },
+      };    case 'RESTART': {
       planetCounter = 2;
       return buildGameState(state.highScore, state.soundEnabled);
     }
