@@ -310,10 +310,14 @@ function gameReducer(state: GameState, action: GameAction): GameState {
           // Camera: show the landed planet at CAMERA_TARGET_Y_RATIO from top
           newTargetCameraY = -(planet.y - SH * GAME_CONFIG.CAMERA_TARGET_Y_RATIO);
 
-          // Prune old objects far below the new camera target
+          // Prune old objects far below the new camera target OR that were orbiting the landed planet
           const cameraWorld = -newTargetCameraY;
           newPlanets = newPlanets.filter(p => p.y > cameraWorld - SH * 0.4);
-          newObstacles = newObstacles.filter(o => o.y > cameraWorld - SH * 0.4);
+          newObstacles = newObstacles.filter(o => {
+            const isFarBelow = o.y > cameraWorld - SH * 0.4;
+            const isOrbitingLandedPlanet = o.orbitPlanetId === planet.id;
+            return isFarBelow && !isOrbitingLandedPlanet;
+          });
 
           // Keep at least 2 unvisited planets ahead
           const unvisitedAhead = newPlanets.filter(p => !newVisited.includes(p.id));
